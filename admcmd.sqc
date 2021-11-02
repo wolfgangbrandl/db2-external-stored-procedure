@@ -1,0 +1,90 @@
+/* ------------------------------------------------------------ */
+/* db2-connect-memory-test: Brandl Wolfgang                     */
+/* Bundesrechenzentrum,    Vienna. 2016-09-08                   */
+/* ------------------------------------------------------------ */
+#include <stdio.h>
+#include <fcntl.h>
+#include <stdarg.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <signal.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sqlca.h>
+#include <string.h>
+#include <time.h>
+
+#include <sql.h>
+
+
+EXEC SQL BEGIN DECLARE SECTION;
+    char dbase [17];
+    char xmldata[2000];
+    static SQL TYPE IS CLOB(2M) xmlclob1 ;
+    sqlint32 out_sqlerror;
+    char buffer[33];
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE SQLCA;
+
+/* ------------------------------------------------------------ */
+int Select_job()
+{
+  int         i=0x00;
+  int         num=0x00;
+ 
+  EXEC SQL CONNECT TO :dbase;
+  if (sqlca.sqlcode) {
+    printf("Select_job: CONNECT: %d\n", sqlca.sqlcode);
+    exit (8);
+  }
+//  EXEC SQL CALL DB2INST1.TCLOB_C (:xmlclob1);
+  memset (xmldata,0x00,sizeof(xmldata));
+  strcpy (xmldata,"Test of external stored proc");
+  strcpy(xmlclob1.data, xmldata);
+  xmlclob1.length = strlen(xmldata)+1;
+  EXEC SQL CALL DB2INST1.TCLOB_C (:xmldata,:out_sqlerror,:buffer);
+  if (out_sqlerror){
+    printf("admcmd: TCLOB_C : State: %d MSG:%s\n", out_sqlerror,buffer);
+    exit (8);
+  }
+  memset (xmldata,0x00,sizeof(xmldata));
+  strcpy (xmldata,"Test with an long string which does not fit into the host variable, we hope soo\n");
+  strcpy(xmlclob1.data, xmldata);
+  xmlclob1.length = strlen(xmldata)+1;
+  EXEC SQL CALL DB2INST1.TCLOB_C (:xmldata,:out_sqlerror,:buffer);
+  if (out_sqlerror){
+    printf("admcmd: TCLOB_C : State: %d MSG:%s\n", out_sqlerror,buffer);
+    exit (8);
+  }
+
+  EXEC SQL COMMIT ;
+  if (sqlca.sqlcode != 0) {
+    printf("Select_job: COMMIT: %d\n", sqlca.sqlcode);
+    exit (8);
+  }
+  EXEC SQL CONNECT RESET;
+  if (sqlca.sqlcode != 0) {
+    printf("Select_job: CONNECT RESET: %d\n", sqlca.sqlcode);
+    exit (8);
+  }
+}
+/* ------------------------------------------------------------ */
+int main (const int iArgs, const char * ppszArgs[])
+{
+  int 		hf;
+
+  if (iArgs < 2) {
+    printf("wlmtest <database name>\n\n");
+    exit (8);
+  } else {
+    strcpy (dbase  , (iArgs > 1) ? ppszArgs[1] : "");
+  }
+  Select_job();
+
+  printf("wlmtest terminated.\n");
+
+  return EXIT_SUCCESS;
+} /* main */
+
+/* --- eof wlmtest.sqc ----------------------------------------- */

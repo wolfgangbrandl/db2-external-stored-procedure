@@ -1,0 +1,206 @@
+#!/usr/bin/bash
+#############################################################################
+## Licensed Materials - Property of BRZ
+##
+## Governed under the terms of the International
+## License Agreement for Non-Warranted Sample Code.
+##
+## (C) COPYRIGHT Bundesrechenzentrum
+## All Rights Reserved.
+## Author : Wolfgang Brandl
+#############################################################################
+#DB2:
+#  Setup/reset/clean/drop an activity Eventmonitor;
+function list_SQL_full ()
+{
+  ccnt=1
+
+  for line in $(grep "x\'0" $TEMPFILE|awk '{print $2}')
+  do
+    result=`db2 -x "SELECT STMT_TEXT AS STMT_TEXT FROM TABLE(MON_GET_PKG_CACHE_STMT(NULL,$line,NULL,-2)) AS T "`
+    SQL="$(echo -e "${result}" | sed -e 's/[[:space:]]*$//')"
+    printf "%s\t%s\n" "$ccnt" "$SQL"
+    let ccnt++
+  done
+}
+
+#-------------------------------------------------------
+# HELP Message
+# ------------------------------------------------------
+print_help ()
+{
+  printf "Usage: activity_event_monitor -m <MODE> -d <Databasename Source> \n"
+  printf " -m <MODE>\n"
+  printf "   MODE can be:\n"
+  printf "       INIT                                  Create tablespaces and Event monitor\n"
+  printf "       CLEAN                                 Clean the whole setup and delete/drop tables and tablespacesTop SQL \n"
+  printf "       RESET                                 Reset tables for a new run \n"
+  printf "       START                                 Start the analysis for the whole instance\n"
+  printf "       TEST                                  Test from CLI\n"
+  printf "       STOP                                  Stop the analysis for the whole instance\n"
+  printf "       ANALYSE                               Analyse\n"
+  printf " -d    Database name\n"
+  printf "Please add the name of the Databases\n"
+}
+#-------------------------------------------------------
+# MAIN
+# ------------------------------------------------------
+PID=$$
+TEMPFILE=/tmp/activity_event_monitor$PID.tmp
+while [[ $# -gt 1 ]]
+do
+  key="$1"
+
+  case $key in
+    -m|--mode)
+      MODE="$2"
+      shift # past argument
+    ;;
+    -d|--database)
+      DB="$2"
+      shift # past argument
+    ;;
+    -h|--help)
+      print_help
+      exit 4
+    ;;
+    *)
+      print_help
+      exit 4
+    ;;
+  esac
+  shift # past argument
+done
+
+if [ "$DB" == "" ]
+then
+  print_help
+  exit 8
+fi
+
+case $MODE in
+  INIT)
+    db2 connect to $DB
+    db2 drop TABLESPACE TBLSP_WLM
+    db2 "CREATE LARGE TABLESPACE TBLSP_WLM IN DATABASE PARTITION GROUP IBMDEFAULTGROUP 
+        PAGESIZE 8k MANAGED BY AUTOMATIC STORAGE 
+        USING STOGROUP "IBMSTOGROUP" 
+        AUTORESIZE YES 
+        INITIALSIZE 32 M 
+        MAXSIZE NONE 
+        EXTENTSIZE 32 
+        PREFETCHSIZE AUTOMATIC 
+        DATA TAG INHERIT 
+        OVERHEAD INHERIT 
+        TRANSFERRATE INHERIT 
+        DROPPED TABLE RECOVERY ON"
+
+    db2 -v "CREATE EVENT MONITOR DB2ACTIVITIES FOR ACTIVITIES 
+            WRITE TO TABLE 
+            ACTIVITY (TABLE ACTIVITY_DB2ACTIVITIES IN TBLSP_WLM PCTDEACTIVATE 100), 
+            ACTIVITYSTMT (TABLE ACTIVITYSTMT_DB2ACTIVITIES IN TBLSP_WLM PCTDEACTIVATE 100), 
+            ACTIVITYVALS (TABLE ACTIVITYVALS_DB2ACTIVITIES IN TBLSP_WLM PCTDEACTIVATE 100), 
+            ACTIVITYMETRICS (TABLE ACTIVITYMETRICS_DB2ACTIVITIES IN TBLSP_WLM PCTDEACTIVATE 100), 
+            CONTROL (TABLE CONTROL_DB2ACTIVITIES IN TBLSP_WLM PCTDEACTIVATE 100) 
+            AUTOSTART"
+#    db2 CREATE SERVICE CLASS db2schulung_sc
+#    db2 "CREATE WORKLOAD db2schulung_wl APPLNAME ('db2schulung') SERVICE CLASS db2schulung_sc COLLECT ACTIVITY DATA WITH DETAILS"
+    db2 terminate
+  ;;
+  CLEAN)
+    db2 connect to $DB
+    db2 SET EVENT MONITOR DB2ACTIVITIES STATE 0
+    db2 FLUSH EVENT MONITOR DB2ACTIVITIES BUFFER
+    db2 DELETE FROM ACTIVITY_DB2ACTIVITIES
+    db2 DELETE FROM ACTIVITYSTMT_DB2ACTIVITIES
+    db2 DELETE FROM ACTIVITY_DB2ACTIVITIES
+    db2 DELETE FROM ACTIVITYMETRICS_DB2ACTIVITIES
+    db2 DELETE FROM CONTROL_DB2ACTIVITIES
+
+    db2 drop event monitor DB2ACTIVITIES
+    db2 drop table ACTIVITYSTMT_DB2ACTIVITIES
+    db2 drop table ACTIVITYVALS_DB2ACTIVITIES
+    db2 drop table ACTIVITY_DB2ACTIVITIES
+    db2 drop table ACTIVITYMETRICS_DB2ACTIVITIES
+    db2 drop table CONTROL_DB2ACTIVITIES
+    db2 drop tablespace TBLSP_WLM
+#    db2 alter WORKLOAD db2schulung_wl disable
+#    db2 drop WORKLOAD db2schulung_wl
+#    db2 alter SERVICE CLASS db2schulung_sc DISABLE
+#    db2 drop SERVICE CLASS db2schulung_sc
+    db2 terminate
+  ;;
+  RESET)
+    db2 connect to $DB
+    db2 SET EVENT MONITOR DB2ACTIVITIES STATE 0
+#    db2 ALTER WORKLOAD db2schulung_wl DISABLE 
+    db2 FLUSH EVENT MONITOR DB2ACTIVITIES BUFFER
+    db2 DELETE FROM ACTIVITY_DB2ACTIVITIES
+    db2 DELETE FROM ACTIVITYSTMT_DB2ACTIVITIES
+    db2 DELETE FROM ACTIVITY_DB2ACTIVITIES
+    db2 DELETE FROM ACTIVITYMETRICS_DB2ACTIVITIES
+    db2 DELETE FROM CONTROL_DB2ACTIVITIES
+    db2 SET EVENT MONITOR DB2ACTIVITIES STATE 1
+#    db2 ALTER WORKLOAD db2schulung_wl ENABLE
+    db2 terminate
+  ;;
+  START)
+    db2 connect to $DB
+    db2 SET EVENT MONITOR DB2ACTIVITIES STATE 1
+#    db2 "ALTER WORKLOAD SYSDEFAULTUSERWORKLOAD COLLECT ACTIVITY DATA ON ALL database partitions WITH DETAILS and values"
+    db2 terminate
+  ;;
+  STOP)
+    db2 connect to $DB
+#    db2 ALTER WORKLOAD db2schulung_wl COLLECT ACTIVITY DATA NONE
+#    db2 DELETE from ACTIVITY_DB2ACTIVITIES
+    db2 "ALTER WORKLOAD SYSDEFAULTUSERWORKLOAD COLLECT ACTIVITY DATA NONE "
+    db2 SET EVENT MONITOR DB2ACTIVITIES STATE 0
+    db2 terminate
+  ;;
+  TEST)
+    db2 connect to $DB
+    db2 SET EVENT MONITOR DB2ACTIVITIES STATE 1
+    db2 "CALL WLM_SET_CONN_ENV( NULL, '<collectactdata>WITH DETAILS, SECTION</collectactdata><collectactpartition>ALL</collectactpartition>')"
+    db2 "select count(*) from employee"
+    db2 "select * from DEPARTMENT "
+    db2 flush event monitor DB2ACTIVITIES buffer
+    db2 "CALL WLM_SET_CONN_ENV( APPHANDLE, '<collectactdata>NONE</collectactdata>')"
+    db2 SET EVENT MONITOR DB2ACTIVITIES STATE 0
+    db2 terminate
+  ;;
+  ANALYSE)
+    db2 connect to $DB
+    db2 flush event monitor DB2ACTIVITIES buffer
+    db2 "SELECT VARCHAR(A.APPL_NAME, 15) as APPL_NAME, VARCHAR(A.TPMON_CLIENT_APP, 20) AS CLIENT_APP_NAME, VARCHAR(A.APPL_ID, 30) as APPL_ID, A.ACTIVITY_ID, A.UOW_ID 
+           FROM ACTIVITY_DB2ACTIVITIES AS A"
+    db2 "select  sum(a.ACT_EXEC_TIME) AS EXEC_TIME
+        , count(*) AS COUNT
+        , PLANID 
+        , cast(CREATOR as VARCHAR(16)) AS CREATOR 
+        , cast(PACKAGE_NAME as VARCHAR(30)) AS PACKAGE_NAME 
+        , cast(PACKAGE_VERSION_ID as varchar(40)) AS PACKAGE_VERSION_ID 
+        , SECTION_NUMBER 
+        , CAST(b.STMT_TEXT as VARCHAR(4000)) as STMT_TEXT 
+	from    ACTIVITY_DB2ACTIVITIES a, 
+        ACTIVITYSTMT_DB2ACTIVITIES b 
+	where   a.APPL_ID=b.APPL_ID 
+        and a.ACTIVITY_ID=b.ACTIVITY_ID 
+        and a.UOW_ID=b.UOW_ID 
+	group by CAST(b.STMT_TEXT as VARCHAR(4000)) 
+         , PLANID 
+        , CREATOR
+        , PACKAGE_NAME 
+        , PACKAGE_VERSION_ID 
+        , SECTION_NUMBER 
+	order by 1 with ur"
+
+    db2 terminate
+  ;;
+
+  *)
+    echo wrong mode
+    exit 8
+  ;;
+esac
+

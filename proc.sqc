@@ -1,0 +1,75 @@
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <sqlda.h>
+#include <sqlca.h>
+#include <sqludf.h>
+#include <sql.h>
+#include <memory.h>
+#include <syslog.h>
+
+SQL_API_RC SQL_API_FN clob_proc(  SQLUDF_CLOB* inXML,
+                                  sqlint32 *out_sqlerror, char buffer[33]
+                               )
+{
+  char            filename[]="/tmp/output.out";
+  FILE            *pFile;
+  EXEC SQL INCLUDE SQLCA;
+  EXEC SQL BEGIN DECLARE SECTION;
+       SQL TYPE IS CLOB(5000) ipdata;
+       char insstmt1[1024];
+       char string[31];
+  EXEC SQL END DECLARE SECTION;
+
+/* Initialize strings used for output parameters to NULL */
+  memset(buffer, '\0', 33);
+  *out_sqlerror = 0;
+
+  pFile = fopen(filename, "a");
+
+  fprintf(pFile,"clob_proc: Begin\n");
+
+  /* Initialize the input data */
+  memset (string,0x00,sizeof(string));
+  ipdata.length = 0;
+  strcpy(ipdata.data," ");
+  fprintf(pFile,"clob_proc: String %s\n",inXML->data);
+
+  /* Copy input parameters to host variables */
+  if (inXML->length >31){
+    *out_sqlerror=38444;
+    sprintf(buffer,"string too long\n");
+    fprintf(pFile,"string too long\n");
+    return 8;
+  }
+  ipdata.length = inXML->length;
+  strncpy(ipdata.data, inXML->data, inXML->length);
+  strncpy(string, inXML->data, sizeof(string)-1);
+  ipdata.data[ipdata.length]='\000';
+  fprintf(pFile,"clob_proc: String %s\n",ipdata.data);
+
+
+  sprintf(insstmt1,"INSERT INTO DB2INST1.TESTPR(TEXT) VALUES(?)");
+  fprintf(pFile,"clob_proc: Statement %s\n",insstmt1);
+  EXEC SQL PREPARE insertStmt FROM :insstmt1;
+  if (sqlca.sqlcode){
+    strcpy (buffer,"PREPARE: TCLOB_C :");
+    *out_sqlerror = sqlca.sqlcode;
+    fprintf(pFile,"PREPARE: TCLOB_C : %d\n", sqlca.sqlcode);
+    fclose (pFile);
+    return 8;
+  }
+
+  EXEC SQL EXECUTE insertStmt using :string;
+  if (sqlca.sqlcode){
+    strcpy (buffer,"EXECUTE: TCLOB_C :");
+    *out_sqlerror = sqlca.sqlcode;
+    fprintf(pFile,"EXECUTE: TCLOB_C : %d\n", sqlca.sqlcode);
+    fclose (pFile);
+    return 8;
+  }
+  fprintf(pFile," CLOB %s\n",ipdata.data);
+  *out_sqlerror = sqlca.sqlcode;
+  fclose (pFile);
+  return 4;
+}
